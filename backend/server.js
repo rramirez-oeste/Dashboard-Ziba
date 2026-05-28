@@ -53,6 +53,85 @@ function esFeriadoMexico(fechaTexto) {
   return feriadosFijos.includes(mmdd);
 }
 
+/**
+ * FUNCIÓN UTILITARIA: Lógica matemática portada de computo_calendario.py
+ * Calcula precios basados en pesos de días, meses y eventos, respetando cotas.
+ */
+function calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas) {
+  const fechas = generarArregloFechas(fechaInicio, fechaFin);
+
+  // --- 2. TABLAS DE PESOS (Traducido de computo_calendario.py) ---
+  const dayWeights = { 
+    1: 0.90, // Lunes
+    2: 0.85, // Martes
+    3: 0.90, // Miercoles
+    4: 1.00, // Jueves
+    5: 1.15, // Viernes
+    6: 1.25, // Sábado
+    0: 1.10  // Domingo
+  };
+
+  const monthWeights = {
+    1: 0.9, 2: 1.0, 3: 1.5, 4: 1.0, 5: 1.0, 6: 1.0,
+    7: 1.0, 8: 1.0, 9: 1.0, 10: 1.0, 11: 1.0, 12: 2.0
+  };
+
+  const customWeights = {
+    "Ninguno": 1.00,
+    "Vacaciones": 1.50,
+    "Festividad": 1.75
+  };
+
+  // --- 5. CÁLCULO DE PREDICCIONES (Promedio base) ---
+  const valoresConocidos = Object.values(reservacionesConfirmadas);
+  let baselinePrice = 400000; // Valor por defecto si no hay historial
+  
+  if (valoresConocidos.length > 0) {
+    baselinePrice = valoresConocidos.reduce((a, b) => a + b, 0) / valoresConocidos.length;
+  }
+
+  const PRICE_FLOOR = 200000;
+  const PRICE_CEILING = 1000000;
+
+  let finalCalendar = {};
+
+  // --- 4, 5 y 6. APLICAR PESOS, CALCULAR Y RELLENAR ---
+  fechas.forEach(fecha => {
+    // Si ya existe un precio en las reservaciones confirmadas, se respeta (Equivalente a fillna)
+    if (reservacionesConfirmadas[fecha]) {
+      finalCalendar[fecha] = reservacionesConfirmadas[fecha];
+      return; // Pasamos a la siguiente fecha
+    }
+
+    const fechaObj = new Date(fecha + 'T00:00:00');
+    const dayOfWeek = fechaObj.getDay(); 
+    const month = fechaObj.getMonth() + 1; 
+
+    // Extraer pesos asignados o usar 1.0 por defecto (Equivalente a .map().fillna(1.0))
+    const wDay = dayWeights[dayOfWeek] || 1.0;
+    const wMonth = monthWeights[month] || 1.0;
+
+    // Detectar evento (Integrado con tu función esFeriadoMexico)
+    let tipoEvento = "Ninguno";
+    if (esFeriadoMexico(fecha)) {
+      tipoEvento = "Festividad";
+    }
+    const wCustom = customWeights[tipoEvento] || 1.0;
+
+    // Fórmula: (Precio base) * (Peso día) * (Peso mes) * (Peso evento)
+    let projectedPrice = baselinePrice * wDay * wMonth * wCustom;
+
+    // Aplicar límites superior e inferior (Equivalente a .clip())
+    projectedPrice = Math.max(PRICE_FLOOR, Math.min(PRICE_CEILING, projectedPrice));
+
+    // Guardar el precio redondeado
+    finalCalendar[fecha] = Math.round(projectedPrice);
+  });
+
+  // --- 7. OUTPUT ---
+  return finalCalendar;
+}
+
 /* ==========================================================================
    1. RUTA CORE: OBTENER ESTRATEGIA MENSUAL O DE RANGO (HÍBRIDO COMPLETO)
    ========================================================================== */
