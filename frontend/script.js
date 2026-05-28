@@ -16,6 +16,14 @@ let puntosDiaIA = {};
 let estacionalidadMesesBase = {};
 let estacionalidadMesesIA = {};
 
+// Estado independiente de la tabla Pesos del Usuario
+let pesosUsuario = {
+  dias: "Medio",
+  mes: "Medio",
+  fechas_especiales: "Medio",
+  fechas_reservadas: "Medio"
+};
+
 const nombresMeses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
 const nombresDiasCompletos = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
@@ -76,13 +84,11 @@ async function iniciarDashboard() {
      ========================================================================== */
   const txtNombre = document.getElementById("txtNombreUsuarioTopbar");
   if (txtNombre) {
-    // Intentar leer nombre del token Keycloak. Si falla o es bypass local, pone Admin
     if (_instanciaKeycloak && _instanciaKeycloak.authenticated && _instanciaKeycloak.idTokenParsed) {
       const token = _instanciaKeycloak.idTokenParsed;
-      // Intenta extraer nombre completo, nombre de pila o el username comercial
       txtNombre.innerText = token.preferred_username || "Usuario Ziba";
     } else {
-      txtNombre.innerText = "Administrador Ziba"; // Fallback en ambiente de desarrollo local
+      txtNombre.innerText = "Administrador Ziba";
     }
   }
 
@@ -92,11 +98,10 @@ async function iniciarDashboard() {
   
   if (trigger && menu) {
     trigger.addEventListener("click", (e) => {
-      e.stopPropagation(); // Evita que el evento se propague al documento
+      e.stopPropagation();
       menu.classList.toggle("show");
     });
 
-    // Cerrar el dropdown si el usuario da clic en cualquier otra parte de la pantalla
     document.addEventListener("click", () => {
       menu.classList.remove("show");
     });
@@ -116,9 +121,102 @@ async function iniciarDashboard() {
     });
   }
 
+  // Cargar pesos del usuario guardados (si el backend los persiste)
+  await cargarPesosUsuario();
+
   // Carga inicial conectando con el Backend Relacional
   await cargarEstrategiaMesCompletoConIA(false);
   generarGraficaHistoricaOcupacion();
+}
+
+/* ==========================================================================
+   2B. TABLA PESOS DEL USUARIO — CARGA Y PERSISTENCIA INDEPENDIENTE
+   ========================================================================== */
+
+/**
+ * Mapeo de valores de texto a clases CSS de semáforo.
+ * Aplica tanto a los selectores de Pesos del Usuario como a los de Meses.
+ */
+const mapaClasesPesos = {
+  "Muy alto":  "very-high",
+  "Alto":      "high",
+  "Medio":     "medio",
+  "Bajo":      "low",
+  "Muy bajo":  "very-low",
+  // aliases para compatibilidad con tabla de meses
+  "Muy alta":  "very-high",
+  "Alta":      "high",
+  "Media":     "medio",
+  "Baja":      "low",
+  "Muy baja":  "very-low"
+};
+
+/**
+ * Intenta cargar los pesos del usuario desde el backend.
+ * Si falla, mantiene los valores por defecto (Medio).
+ */
+async function cargarPesosUsuario() {
+  try {
+    const response = await fetch("http://localhost:3000/pesos-usuario");
+    if (response.ok) {
+      const data = await response.json();
+      // Fusionar con valores por defecto si el backend devuelve datos parciales
+      pesosUsuario = { ...pesosUsuario, ...data };
+    }
+  } catch (error) {
+    console.warn("ℹ️ No se pudieron cargar los pesos del usuario desde el backend. Usando valores por defecto.", error);
+  }
+
+  // Sincronizar la UI con los valores cargados (o por defecto)
+  sincronizarSelectoresPesosUsuario();
+}
+
+/**
+ * Actualiza el estado visual de todos los selectores de la tabla Pesos del Usuario
+ * para que reflejen los valores del objeto `pesosUsuario`.
+ */
+function sincronizarSelectoresPesosUsuario() {
+  const selectores = document.querySelectorAll(".select-peso-usuario");
+  selectores.forEach(sel => {
+    const key = sel.dataset.pesoKey;
+    if (pesosUsuario[key]) {
+      sel.value = pesosUsuario[key];
+      // Aplicar clase semáforo
+      sel.className = "select-peso-usuario " + (mapaClasesPesos[pesosUsuario[key]] || "medio");
+    }
+  });
+}
+
+/**
+ * Manejador del cambio en cualquier selector de la tabla Pesos del Usuario.
+ * Actualiza el estado local, la clase semáforo en tiempo real y persiste en backend.
+ * @param {HTMLSelectElement} selectEl 
+ */
+async function actualizarPesoUsuario(selectEl) {
+  const key = selectEl.dataset.pesoKey;
+  const val = selectEl.value;
+
+  // 1. Actualizar estado local
+  pesosUsuario[key] = val;
+
+  // 2. Reactividad visual inmediata: cambiar clase semáforo
+  selectEl.className = "select-peso-usuario " + (mapaClasesPesos[val] || "medio");
+
+  // 3. Persistir en el backend (si está disponible)
+  try {
+    const response = await fetch("http://localhost:3000/pesos-usuario", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value: val })
+    });
+
+    if (response.ok) {
+      console.log(`💾 Peso del usuario guardado: ${key} -> ${val}`);
+    }
+  } catch (error) {
+    // En desarrollo local sin backend, solo loguear
+    console.warn(`ℹ️ Backend no disponible. Peso registrado solo en memoria: ${key} -> ${val}`);
+  }
 }
 
 /* ==========================================================================
@@ -198,11 +296,9 @@ function renderizarConsolaParametros() {
       const catActual = estacionalidadMesesBase[idx] || demandaDefectoMeses[idx];
       let catIA = estacionalidadMesesIA[idx] || catActual;
       
-      // Obtener las clases de color correspondientes
       const claseColorUser = mapaClasesEstacionales[catActual] || "medio";
       const claseColorIA = mapaClasesEstacionales[catIA] || "medio";
 
-      // 🏆 INYECCIÓN DE CLASE: Le añadimos la clase de color directamente al <select> del usuario
       tr.innerHTML = `
         <td><strong>${m}</strong></td>
         <td>
@@ -279,33 +375,8 @@ async function actualizarPuntosDiaLocal(inputEl) {
   }
 }
 
-async function actualizarEstacionalidadMesLocal(selectEl) {
-  const monthId = parseInt(selectEl.dataset.month);
-  const val = selectEl.value;
-  const idxMes = monthId - 1;
-
-  estacionalidadMesesBase[idxMes] = val;
-  estacionalidadMesesIA[idxMes] = val; 
-
-  try {
-    await fetch("http://localhost:3000/actualizar-ponderacion-mes", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id_month: monthId, pond_month_user: val })
-    });
-
-    if (monthId === (mesActual + 1)) {
-      await cargarEstrategiaMesCompletoConIA(true);
-    } else {
-      renderVisualOnly(); 
-    }
-  } catch (error) {
-    console.error("Error al actualizar ponderación mensual:", error);
-  }
-}
-
 function renderVisualOnly() {
-  renderConsolaParametros();
+  renderizarConsolaParametros();
 }
 
 /* ==========================================================================
@@ -381,12 +452,10 @@ async function renderizarCalendarioDinamico() {
   const ingresosGlobalesReales = reservacionesDB.reduce((acumulado, r) => acumulado + (parseFloat(r.precio_final) || 0), 0);
   const porcentajeOcupacionAnual = ((totalReservacionesAbsoluto / 365) * 100).toFixed(1);
 
-  // Inyección reactiva inmediata en las tarjetas de la interfaz
   if (document.getElementById("kpiReservaciones")) {
     document.getElementById("kpiReservaciones").innerText = totalReservacionesAbsoluto;
   }
   
-  // 🏆 FORMATO EXTENDIDO REQUERIDO (Mismo estilo que el rango de tarifas: $X,XXX,XXX.XX pesos mexicanos)
   if (document.getElementById("kpiIngreso")) {
     document.getElementById("kpiIngreso").innerText = `$${ingresosGlobalesReales.toLocaleString('es-MX', {
       minimumFractionDigits: 2,

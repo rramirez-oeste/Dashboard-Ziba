@@ -1,3 +1,11 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  
+  /* 🏆 AGREGA ESTA LÍNEA */
+  text-transform: uppercase !important; 
+}
 /* ==========================================================================
    RESET & PALETA DE COLORES OFICIAL (OPTIMIZADO PARA JARDÍN ZIBÁ)
    ========================================================================== */
@@ -174,9 +182,10 @@ body {
 }
 
 .topbar h1 {
-  font-size: 1.85rem;
-  font-weight: bold;
-  color: var(--pure-black);
+  font-size: 21.33px !important;
+  font-weight: bold !important;
+  color: #000000 !important;
+  text-transform: uppercase !important;
 }
 
 .topbar p {
@@ -359,11 +368,129 @@ body {
 }
 
 /* ==========================================================================
+   NUEVA SECCIÓN: PESOS DEL USUARIO (TABLA MAESTRA DE PONDERACIONES)
+   ========================================================================== */
+.pesos-usuario-section {
+  width: 100%;
+}
+
+.pesos-usuario-box {
+
+  background: var(--pure-white);
+  border: 1px solid rgba(188, 186, 187, 0.3);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+
+  border-top: 3px solid var(--primary-orange);
+  width: 50%;
+}
+
+.pesos-usuario-box h3 {
+  font-size: 18.66px;
+  font-weight: bold;
+  color: var(--pure-black);
+}
+
+/* Selectores dentro de la tabla de Pesos del Usuario */
+.select-peso-usuario {
+  width: 160px !important;
+  height: 28px !important;
+  padding: 0 6px !important;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: bold;
+  border: 1.5px solid rgba(188, 186, 187, 0.5) !important;
+  border-radius: 6px !important;
+  background-color: var(--pure-white) !important;
+  color: var(--text-dark) !important;
+  cursor: pointer;
+  outline: none;
+  text-align: center;
+  appearance: none;
+  -webkit-appearance: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: all 0.15s ease-in-out;
+}
+
+.select-peso-usuario:hover {
+  border-color: rgba(244, 152, 27, 0.5) !important;
+  box-shadow: 0 2px 6px rgba(244, 152, 27, 0.08);
+}
+
+.select-peso-usuario:focus {
+  border-color: var(--primary-orange) !important;
+  box-shadow: 0 0 0 2px rgba(244, 152, 27, 0.12) !important;
+}
+
+.select-peso-usuario option {
+  background-color: var(--pure-white) !important;
+  color: var(--text-dark) !important;
+}
+
+/* Semáforo para la tabla Pesos del Usuario */
+.select-peso-usuario.very-high {
+  background-color: #FAD4D0 !important;
+  color: #7A110A !important;
+  border-color: #A1150C !important;
+}
+
+.select-peso-usuario.high {
+  background-color: #FFE6B7 !important;
+  color: #874F00 !important;
+  border-color: #A15E00 !important;
+}
+
+.select-peso-usuario.medio {
+  background-color: #C2ECCF !important;
+  color: #0B5324 !important;
+  border-color: #0C612A !important;
+}
+
+.select-peso-usuario.low {
+  background-color: #D2E3FC !important;
+  color: #1255B3 !important;
+  border-color: #1561D6 !important;
+}
+
+.select-peso-usuario.very-low {
+  background-color: #E4E7EB !important;
+  color: #43474B !important;
+  border-color: #4B5055 !important;
+}
+
+/* Filas de la tabla de Pesos del Usuario */
+#tbodyPesosUsuario td {
+  padding: 10px 16px !important;
+  vertical-align: middle !important;
+  background-color: var(--pure-white) !important;
+  height: 48px;
+  text-align: center !important;
+}
+
+/* Primera columna alineada a la izquierda para legibilidad del label */
+#tbodyPesosUsuario td:first-child {
+  text-align: left !important;
+  padding-left: 20px !important;
+}
+
+/* Encabezados de la tabla Pesos del Usuario centrados */
+.pesos-usuario-box .tabla-demanda th {
+  text-align: center !important;
+  padding: 10px 16px !important;
+}
+
+.pesos-usuario-box .tabla-demanda th:first-child {
+  text-align: left !important;
+  padding-left: 20px !important;
+}
+
+/* ==========================================================================
    INDICADORES Y MATRICES DE ENTORNO (ALINEACIÓN TRIPLE HORIZONTAL OFICIAL)
    ========================================================================== */
 .indicadores-container {
   display: grid;
-  grid-template-columns: repeat(3, 1fr) !important; /* Forzar 3 columnas idénticas */
+  grid-template-columns: repeat(3, 1fr) !important;
   gap: 20px;
   width: 100%;
 }
@@ -377,7 +504,7 @@ body {
 }
 
 .indicador-box h3 {
-  font-size: 1.25rem;
+  font-size: 18.66px;
   font-weight: bold;
   color: var(--pure-black);
 }
@@ -405,13 +532,13 @@ body {
   padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid rgba(188, 186, 187, 0.15);
-  font-size: 0.9rem;
+  font-size: 16px;
 }
 
 .tabla-demanda th {
   font-weight: bold;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 16px;
   text-transform: uppercase;
 }
 
@@ -597,7 +724,7 @@ body {
 
 /* ESTADO 1: FECHA LIBRE (Verde Claro) */
 .day.libre {
-  background-color: #E2F7E3 !important; /* Verde claro comercial */
+  background-color: #E2F7E3 !important;
   border: 1px solid #BCE7C0 !important;
 }
 .day.libre .day-number {
@@ -606,14 +733,14 @@ body {
 
 /* ESTADO 2: FECHA OCUPADA (Negro Puro) */
 .day.ocupado {
-  background-color: #1A1A1A !important; /* Negro contrastado */
+  background-color: #1A1A1A !important;
   border: 1px solid #000000 !important;
 }
 .day.ocupado .day-number {
-  color: #FFFFFF; /* Texto blanco para legibilidad superior */
+  color: #FFFFFF;
 }
 .day.ocupado .price-row span {
-  color: #999999; /* Textos de etiqueta opacados en fondo oscuro */
+  color: #999999;
 }
 
 .day:hover {

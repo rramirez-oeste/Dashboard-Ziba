@@ -58,6 +58,81 @@
       </div>
     </header>
 
+    <!-- ================================================================
+         NUEVA TABLA: PESOS DEL USUARIO (arriba de todo)
+         ================================================================ -->
+    <section class="pesos-usuario-section">
+      <div class="indicador-box visual-split-box pesos-usuario-box">
+        <div class="block-header-inline">
+          <h3>Pesos del Usuario</h3>
+        </div>
+
+        <div class="table-subpanel" style="margin-top: 15px;">
+          <table class="tabla-demanda table-editable">
+            <thead>
+              <tr>
+                <th>Factor de Ponderación</th>
+                <th>Nivel de Peso</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyPesosUsuario">
+              <tr>
+                <td><strong>Ponderación de Días</strong></td>
+                <td>
+                  <select class="select-peso-usuario select-mes-cell medio" data-peso-key="dias" onchange="actualizarPesoUsuario(this)">
+                    <option value="Muy alto">Muy Alto</option>
+                    <option value="Alto">Alto</option>
+                    <option value="Medio" selected>Medio</option>
+                    <option value="Bajo">Bajo</option>
+                    <option value="Muy bajo">Muy Bajo</option>
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Ponderación del Mes</strong></td>
+                <td>
+                  <select class="select-peso-usuario select-mes-cell medio" data-peso-key="mes" onchange="actualizarPesoUsuario(this)">
+                    <option value="Muy alto">Muy Alto</option>
+                    <option value="Alto">Alto</option>
+                    <option value="Medio" selected>Medio</option>
+                    <option value="Bajo">Bajo</option>
+                    <option value="Muy bajo">Muy Bajo</option>
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Ponderación de Fechas Especiales</strong></td>
+                <td>
+                  <select class="select-peso-usuario select-mes-cell medio" data-peso-key="fechas_especiales" onchange="actualizarPesoUsuario(this)">
+                    <option value="Muy alto">Muy Alto</option>
+                    <option value="Alto">Alto</option>
+                    <option value="Medio" selected>Medio</option>
+                    <option value="Bajo">Bajo</option>
+                    <option value="Muy bajo">Muy Bajo</option>
+                  </select>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Fechas Reservadas</strong></td>
+                <td>
+                  <select class="select-peso-usuario select-mes-cell medio" data-peso-key="fechas_reservadas" onchange="actualizarPesoUsuario(this)">
+                    <option value="Muy alto">Muy Alto</option>
+                    <option value="Alto">Alto</option>
+                    <option value="Medio" selected>Medio</option>
+                    <option value="Bajo">Bajo</option>
+                    <option value="Muy bajo">Muy Bajo</option>
+                  </select>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================
+         TRES TABLAS ORIGINALES
+         ================================================================ -->
     <section class="indicadores-container">
       
       <div class="indicador-box visual-split-box">
@@ -123,7 +198,7 @@
                   </div>
                 </td>
                 <td style="text-align: center; vertical-align: middle;">
-                  <input type="number" id="inputPondEspecialUser" class="input-table-cell" min="0" max="100"  onchange="guardarPeriodoEspecialBD(this)">
+                  <input type="number" id="inputPondEspecialUser" class="input-table-cell" min="0" max="100" onchange="guardarPeriodoEspecialBD(this)">
                 </td>
                 <td style="text-align: center; vertical-align: middle;">
                   <div id="txtPondEspecialIA" class="contenedor-badge-ia medio">—</div>
