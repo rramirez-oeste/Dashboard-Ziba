@@ -2,9 +2,6 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  
-  /* 🏆 AGREGA ESTA LÍNEA */
-  text-transform: uppercase !important; 
 }
 /* ==========================================================================
    RESET & PALETA DE COLORES OFICIAL (OPTIMIZADO PARA JARDÍN ZIBÁ)
@@ -274,6 +271,7 @@ body {
   justify-content: space-between;
   align-items: center;
   width: 100%;
+  text-transform: uppercase;
 }
 
 .save-config-inline-btn {
@@ -480,6 +478,11 @@ body {
   padding: 10px 16px !important;
 }
 
+.tabla-demanda th:first-child,
+.tabla-demanda td:first-child {
+  text-align: left;
+}
+
 .pesos-usuario-box .tabla-demanda th:first-child {
   text-align: left !important;
   padding-left: 20px !important;
@@ -530,7 +533,7 @@ body {
 
 .tabla-demanda th, .tabla-demanda td {
   padding: 8px 10px;
-  text-align: left;
+  text-align: center;
   border-bottom: 1px solid rgba(188, 186, 187, 0.15);
   font-size: 16px;
 }
@@ -576,6 +579,7 @@ body {
   grid-template-columns: repeat(2, 1fr) !important; 
   gap: 20px;
   flex: 1.15;
+  align-items: stretch;
 }
 
 .dashboard-card {
@@ -587,6 +591,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: center;
+  height: 100%;
 }
 
 .dashboard-card span {

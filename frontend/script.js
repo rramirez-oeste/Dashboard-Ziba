@@ -123,6 +123,7 @@ async function iniciarDashboard() {
 
   // Cargar pesos del usuario guardados (si el backend los persiste)
   await cargarPesosUsuario();
+  await cargarPeriodosEspeciales();
 
   // Carga inicial conectando con el Backend Relacional
   await cargarEstrategiaMesCompletoConIA(false);
@@ -778,4 +779,155 @@ function generarGraficaHistoricaOcupacion() {
     wrapper.innerHTML = `<div class="chart-value">${item.valor}%</div><div class="chart-bar" style="height:${item.valor * 1.3}px"></div><div class="chart-month">${item.mes}</div>`;
     chart.appendChild(wrapper);
   });
+}
+
+/* ==========================================================================
+   PERIODOS ESPECIALES — Carga, guardado y renderizado
+   ========================================================================== */
+let periodosEspeciales = []; // Estado local
+
+async function cargarPeriodosEspeciales() {
+  try {
+    const response = await fetch("http://localhost:3000/periodos-especiales");
+    if (response.ok) {
+      periodosEspeciales = await response.json();
+      renderizarPeriodosEspeciales();
+    }
+  } catch (error) {
+    console.warn("No se pudieron cargar los periodos especiales.", error);
+  }
+}
+
+function renderizarPeriodosEspeciales() {
+  const tbody = document.getElementById("tbodyPeriodosEspeciales");
+  if (!tbody) return;
+
+  tbody.innerHTML = "";
+
+  // Fila de entrada para agregar nuevo periodo
+  const filaInput = document.createElement("tr");
+  filaInput.id = "fila-nuevo-periodo";
+  filaInput.innerHTML = `
+    <td>
+      <div class="rango-fecha-container">
+        <input type="text" id="nombreEspecial" class="input-date-custom" placeholder="Nombre" style="width:90px">
+        <input type="date" id="fechaInicioEspecial" class="input-date-custom">
+        <span class="separador-fecha">al</span>
+        <input type="date" id="fechaFinEspecial" class="input-date-custom">
+      </div>
+    </td>
+    <td style="text-align: center; vertical-align: middle;">
+      <select id="selectNuevoPeriodoUser" class="select-peso-usuario medio" onchange="aplicarColorSelectorPeriodo(this)">
+        <option value="Muy alto">Muy Alto</option>
+        <option value="Alto">Alto</option>
+        <option value="Medio" selected>Medio</option>
+        <option value="Bajo">Bajo</option>
+        <option value="Muy bajo">Muy Bajo</option>
+      </select>
+    </td>
+    <td style="text-align: center; vertical-align: middle;">
+      <button onclick="guardarNuevoPeriodoEspecial()" class="save-config-inline-btn">+ Guardar</button>
+    </td>
+  `;
+  tbody.appendChild(filaInput);
+
+  // Filas de periodos ya guardados
+  periodosEspeciales.forEach(p => {
+    const clase = mapaClasesPesos[p.pond_especial_user] || "medio";
+    const claseIA = mapaClasesPesos[p.pond_especial_ia] || "medio";
+
+    const fila = document.createElement("tr");
+    fila.dataset.idPeriodo = p.id_fecha_especial;
+    fila.innerHTML = `
+      <td>
+        <div class="rango-fecha-container">
+          <strong>${p.nombre}</strong>&nbsp;
+          <span style="color:var(--text-muted); font-size:0.8rem">${p.fecha_inicio} al ${p.fecha_fin}</span>
+        </div>
+      </td>
+      <td style="text-align: center; vertical-align: middle;">
+        <select class="select-peso-usuario ${clase}" data-id="${p.id_fecha_especial}" onchange="actualizarPeriodoEspecialExistente(this)">
+          <option value="Muy alto" ${p.pond_especial_user === 'Muy alto' ? 'selected' : ''}>Muy Alto</option>
+          <option value="Alto" ${p.pond_especial_user === 'Alto' ? 'selected' : ''}>Alto</option>
+          <option value="Medio" ${p.pond_especial_user === 'Medio' ? 'selected' : ''}>Medio</option>
+          <option value="Bajo" ${p.pond_especial_user === 'Bajo' ? 'selected' : ''}>Bajo</option>
+          <option value="Muy bajo" ${p.pond_especial_user === 'Muy bajo' ? 'selected' : ''}>Muy Bajo</option>
+        </select>
+      </td>
+      <td style="text-align: center; vertical-align: middle;">
+        <div class="contenedor-badge-ia ${claseIA}">${p.pond_especial_ia || '—'}</div>
+        &nbsp;
+        <button onclick="eliminarPeriodoEspecial(${p.id_fecha_especial})" style="background:transparent;border:none;color:#FF4D4D;cursor:pointer;font-weight:bold;">✕</button>
+      </td>
+    `;
+    tbody.appendChild(fila);
+  });
+}
+
+function aplicarColorSelectorPeriodo(sel) {
+  sel.className = "select-peso-usuario " + (mapaClasesPesos[sel.value] || "medio");
+}
+
+async function guardarNuevoPeriodoEspecial() {
+  const nombre     = document.getElementById("nombreEspecial")?.value || "Periodo especial";
+  const fechaInicio = document.getElementById("fechaInicioEspecial")?.value;
+  const fechaFin    = document.getElementById("fechaFinEspecial")?.value;
+  const ponderacion = document.getElementById("selectNuevoPeriodoUser")?.value;
+
+  if (!fechaInicio || !fechaFin || !ponderacion) {
+    alert("Por favor completa las fechas y la ponderación.");
+    return;
+  }
+
+  try {
+    const response = await fetch("http://localhost:3000/periodos-especiales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        nombre,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        pond_especial_user: ponderacion
+      })
+    });
+
+    if (response.ok) {
+      console.log("💾 Periodo especial guardado.");
+      await cargarPeriodosEspeciales(); // Refresca la tabla
+    } else {
+      const err = await response.json();
+      alert("Error: " + err.error);
+    }
+  } catch (error) {
+    console.error("Error al guardar periodo especial:", error);
+  }
+}
+
+async function actualizarPeriodoEspecialExistente(sel) {
+  const id  = sel.dataset.id;
+  const val = sel.value;
+
+  sel.className = "select-peso-usuario " + (mapaClasesPesos[val] || "medio");
+
+  try {
+    await fetch(`http://localhost:3000/periodos-especiales/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pond_especial_user: val })
+    });
+    console.log(`💾 Periodo ${id} actualizado a ${val}`);
+  } catch (error) {
+    console.error("Error al actualizar periodo especial:", error);
+  }
+}
+
+async function eliminarPeriodoEspecial(id) {
+  if (!confirm("¿Eliminar este periodo especial?")) return;
+
+  try {
+    await fetch(`http://localhost:3000/periodos-especiales/${id}`, { method: "DELETE" });
+    await cargarPeriodosEspeciales();
+  } catch (error) {
+    console.error("Error al eliminar periodo especial:", error);
+  }
 }
