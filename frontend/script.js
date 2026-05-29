@@ -227,29 +227,27 @@ async function cargarEstrategiaMesCompletoConIA(esManual = false) {
   const ultimoDia = `${anioActual}-${String(mesActual + 1).padStart(2, '0')}-${new Date(anioActual, mesActual + 1, 0).getDate()}`;
 
   try {
-    const response = await fetch("/api/obtener-estrategia-periodo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fecha_inicio: primerDia,
-        fecha_fin: ultimoDia,
-        es_recalculo_manual: esManual
-      })
-    });
+    const response = await fetch(
+      `/api/estrategia?fecha_inicio=${primerDia}&fecha_fin=${ultimoDia}`
+    );
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      console.error("🔴 Error del servidor:", err.detalle || err.error || response.status);
-      return;
-    }
-
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
 
     puntosDiaPreferente = data.ponderacion_dias_user || {};
-    puntosDiaIA = data.ponderacion_dias_ia || {};
-    
-    estacionalidadMesesBase[mesActual] = data.estacionalidad_periodo_user;
-    estacionalidadMesesIA[mesActual] = data.estacionalidad_periodo_ia;
+    puntosDiaIA         = data.ponderacion_dias_ia   || {};
+
+    // Cargar los 12 meses completos desde la BD
+    if (data.estacionalidad_meses_completo_user) {
+      Object.entries(data.estacionalidad_meses_completo_user).forEach(([k, v]) => {
+        estacionalidadMesesBase[parseInt(k)] = v;
+      });
+    }
+    if (data.estacionalidad_meses_completo_ia) {
+      Object.entries(data.estacionalidad_meses_completo_ia).forEach(([k, v]) => {
+        estacionalidadMesesIA[parseInt(k)] = v;
+      });
+    }
 
     estrategiaMesActualIA = data;
 
@@ -445,7 +443,11 @@ async function renderizarCalendarioDinamico() {
     `;
 
     dayElement.addEventListener("click", () => {
-      alert(`Fecha seleccionada: ${fechaTextoIso}\nPrecio Sugerido IA: $${precioSugeridoIa.toLocaleString()} MXN`);
+      if (estaOcupado) {
+        abrirModalDetalle(reservaReal);
+      } else {
+        abrirModalAgregar(fechaTextoIso, precioSugeridoIa);
+      }
     });
 
     container.appendChild(dayElement);
@@ -626,6 +628,120 @@ async function eliminarPeriodoEspecial(id, btn) {
 // Stubs para compatibilidad con los atributos inline del HTML original
 function calcularPeriodoEspecialIA() {}
 function guardarPeriodoEspecialBD() {}
+
+/* ==========================================================================
+   9. MODAL DE RESERVACIÓN — AGREGAR / VER / ELIMINAR
+   ========================================================================== */
+let _modalFechaActiva = null;
+let _modalReservaActiva = null;
+
+function abrirModalAgregar(fecha, precioIA) {
+  _modalFechaActiva = fecha;
+  _modalReservaActiva = null;
+
+  const [anio, mes, dia] = fecha.split('-');
+  document.getElementById('modalFechaLabel').innerText =
+    `${parseInt(dia)} de ${nombresMeses[parseInt(mes) - 1]} de ${anio}`;
+  document.getElementById('inputNombreCliente').value = '';
+  document.getElementById('inputPrecioFinal').value = precioIA;
+  document.getElementById('modalPrecioIA').innerText =
+    `$${Number(precioIA).toLocaleString('es-MX')} MXN`;
+
+  document.getElementById('modalVistaAgregar').style.display = 'block';
+  document.getElementById('modalVistaDetalle').style.display = 'none';
+  document.getElementById('modalReservacion').style.display = 'flex';
+  document.getElementById('inputNombreCliente').focus();
+}
+
+function abrirModalDetalle(reserva) {
+  _modalFechaActiva = reserva.fecha_evento;
+  _modalReservaActiva = reserva;
+
+  const [anio, mes, dia] = reserva.fecha_evento.split('-');
+  document.getElementById('modalDetalleFecha').innerText =
+    `${parseInt(dia)} de ${nombresMeses[parseInt(mes) - 1]} de ${anio}`;
+  document.getElementById('modalDetalleCliente').innerText =
+    reserva.nombre_cliente || 'Cliente Gala';
+  document.getElementById('modalDetallePrecio').innerText =
+    `$${Number(reserva.precio_final).toLocaleString('es-MX')} MXN`;
+  document.getElementById('modalDetalleId').innerText = `#${reserva.id_reservation}`;
+
+  document.getElementById('modalVistaAgregar').style.display = 'none';
+  document.getElementById('modalVistaDetalle').style.display = 'block';
+  document.getElementById('modalReservacion').style.display = 'flex';
+}
+
+function cerrarModalReservacion() {
+  document.getElementById('modalReservacion').style.display = 'none';
+  _modalFechaActiva = null;
+  _modalReservaActiva = null;
+}
+
+async function confirmarReservacion() {
+  const nombre  = document.getElementById('inputNombreCliente').value.trim() || 'Cliente Gala';
+  const precio  = parseFloat(document.getElementById('inputPrecioFinal').value);
+  const fecha   = _modalFechaActiva;
+
+  if (!fecha || isNaN(precio) || precio <= 0) {
+    alert('Por favor ingresa un precio válido.');
+    return;
+  }
+
+  const btnConfirmar = document.querySelector('.btn-modal-confirmar');
+  btnConfirmar.disabled = true;
+  btnConfirmar.innerText = 'Guardando...';
+
+  try {
+    const res = await fetch('/api/reservaciones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha_evento: fecha, precio_final: precio, nombre_cliente: nombre })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Error al guardar la reservación.');
+      return;
+    }
+    cerrarModalReservacion();
+    await renderizarCalendarioDinamico(); // Refrescar calendario con el nuevo dato
+  } catch (e) {
+    alert('No se pudo conectar con el servidor.');
+    console.error(e);
+  } finally {
+    btnConfirmar.disabled = false;
+    btnConfirmar.innerText = '✔ Confirmar Reservación';
+  }
+}
+
+async function eliminarReservacion() {
+  if (!_modalReservaActiva) return;
+  if (!confirm(`¿Cancelar la reservación #${_modalReservaActiva.id_reservation}?`)) return;
+
+  const btnEliminar = document.querySelector('.btn-modal-eliminar');
+  btnEliminar.disabled = true;
+
+  try {
+    const res = await fetch(`/api/reservaciones/${_modalReservaActiva.id_reservation}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      cerrarModalReservacion();
+      await renderizarCalendarioDinamico();
+    } else {
+      alert('Error al cancelar la reservación.');
+    }
+  } catch (e) {
+    alert('No se pudo conectar con el servidor.');
+  } finally {
+    btnEliminar.disabled = false;
+  }
+}
+
+// Cerrar modal al hacer clic fuera de la tarjeta
+document.addEventListener('click', (e) => {
+  const overlay = document.getElementById('modalReservacion');
+  if (overlay && e.target === overlay) cerrarModalReservacion();
+});
 
 function generarGraficaHistoricaOcupacion() {
   const chart = document.getElementById("chartBars"); if (!chart) return; chart.innerHTML = "";
