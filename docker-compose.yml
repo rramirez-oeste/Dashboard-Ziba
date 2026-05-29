@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # 1. CONTENEDOR DE LA BASE DE DATOS
+  db:
+    image: postgres:15-alpine
+    container_name: ziba_database
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: ziba_dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ziba_dashboard"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # 2. CONTENEDOR DEL BACKEND
+  backend:
+    build: ./backend
+    container_name: ziba_backend
+    environment:
+      - DB_HOST=db
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/health || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+
+  # 3. CONTENEDOR DEL FRONTEND
+  frontend:
+    build: ./frontend
+    container_name: ziba_frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
