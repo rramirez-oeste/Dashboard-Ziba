@@ -228,29 +228,27 @@ async function cargarEstrategiaMesCompletoConIA(esManual = false) {
   const ultimoDia = `${anioActual}-${String(mesActual + 1).padStart(2, '0')}-${new Date(anioActual, mesActual + 1, 0).getDate()}`;
 
   try {
-    const response = await fetch("/api/obtener-estrategia-periodo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fecha_inicio: primerDia,
-        fecha_fin: ultimoDia,
-        es_recalculo_manual: esManual
-      })
-    });
+    const response = await fetch(
+      `/api/estrategia?fecha_inicio=${primerDia}&fecha_fin=${ultimoDia}`
+    );
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      console.error("🔴 Error del servidor:", err.detalle || err.error || response.status);
-      return;
-    }
-
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
 
     puntosDiaPreferente = data.ponderacion_dias_user || {};
-    puntosDiaIA = data.ponderacion_dias_ia || {};
-    
-    estacionalidadMesesBase[mesActual] = data.estacionalidad_periodo_user;
-    estacionalidadMesesIA[mesActual] = data.estacionalidad_periodo_ia;
+    puntosDiaIA         = data.ponderacion_dias_ia   || {};
+
+    // Cargar los 12 meses completos desde la BD
+    if (data.estacionalidad_meses_completo_user) {
+      Object.entries(data.estacionalidad_meses_completo_user).forEach(([k, v]) => {
+        estacionalidadMesesBase[parseInt(k)] = v;
+      });
+    }
+    if (data.estacionalidad_meses_completo_ia) {
+      Object.entries(data.estacionalidad_meses_completo_ia).forEach(([k, v]) => {
+        estacionalidadMesesIA[parseInt(k)] = v;
+      });
+    }
 
     estrategiaMesActualIA = data;
 
@@ -274,18 +272,29 @@ function renderizarConsolaParametros() {
     "Muy alto": "very-high", "Alto": "high", "Medio": "medio", "Bajo": "low", "Muy bajo": "very-low"
   };
 
+  const opcionesDia = ["Muy alto", "Alto", "Medio", "Bajo", "Muy bajo"];
   const ordenDias = [1, 2, 3, 4, 5, 6, 0];
   if (tbodyDiasBase) {
     tbodyDiasBase.innerHTML = "";
     ordenDias.forEach(d => {
       const tr = document.createElement("tr");
-      const scoreUser = puntosDiaPreferente[d] !== undefined ? puntosDiaPreferente[d] : 50;
-      const scoreIA = puntosDiaIA[d] !== undefined ? puntosDiaIA[d] : "—";
+      const valUser = puntosDiaPreferente[d] !== undefined ? puntosDiaPreferente[d] : "Medio";
+      const valIA   = puntosDiaIA[d]         !== undefined ? puntosDiaIA[d]         : "Medio";
+      const claseUser = mapaClasesEstacionales[valUser] || "medio";
+      const claseIA   = mapaClasesEstacionales[valIA]   || "medio";
+
+      const optsHtml = opcionesDia.map(o =>
+        `<option value="${o}" ${valUser === o ? 'selected' : ''}>${o}</option>`
+      ).join('');
 
       tr.innerHTML = `
         <td><strong>${nombresDiasCompletos[d]}</strong></td>
-        <td><input type="number" class="input-table-cell" min="0" max="100" value="${scoreUser}" data-day="${d}" onchange="actualizarPuntosDiaLocal(this)"></td>
-        <td style="color: var(--ai-blue); font-weight: bold;">${scoreIA}</td>
+        <td>
+          <select class="select-mes-cell ${claseUser}" data-day="${d}" onchange="actualizarPuntosDiaLocal(this)">
+            ${optsHtml}
+          </select>
+        </td>
+        <td><div class="contenedor-badge-ia ${claseIA}">${valIA}</div></td>
       `;
       tbodyDiasBase.appendChild(tr);
     });
@@ -365,10 +374,16 @@ async function actualizarEstacionalidadMesLocal(selectEl) {
 /* ==========================================================================
    5. PERSISTENCIA DE CAMBIOS MANUALES A POSTGRES
    ========================================================================== */
-async function actualizarPuntosDiaLocal(inputEl) {
-  const day = parseInt(inputEl.dataset.day);
-  const val = Math.min(100, Math.max(0, parseInt(inputEl.value) || 0));
-  inputEl.value = val;
+async function actualizarPuntosDiaLocal(selectEl) {
+  const day = parseInt(selectEl.dataset.day);
+  const val = selectEl.value;
+
+  // Actualizar color del select de inmediato
+  const mapaClases = {
+    "Muy alto": "very-high", "Alto": "high", "Medio": "medio",
+    "Bajo": "low", "Muy bajo": "very-low"
+  };
+  selectEl.className = "select-mes-cell " + (mapaClases[val] || "medio");
 
   try {
     await fetch("/api/actualizar-ponderacion-dia", {
@@ -378,7 +393,7 @@ async function actualizarPuntosDiaLocal(inputEl) {
     });
     await cargarEstrategiaMesCompletoConIA(true);
   } catch (error) {
-    console.error("Error al actualizar puntos de día:", error);
+    console.error("Error al actualizar ponderación de día:", error);
   }
 }
 
@@ -402,10 +417,10 @@ async function renderizarCalendarioDinamico() {
     container.appendChild(cell);
   });
 
-  try {
-    const response = await fetch("/api/reservaciones");
-    reservacionesDB = await response.json();
-  } catch (e) { console.warn("No se pudieron actualizar los registros core."); }
+  // Reservaciones vienen del objeto estrategiaMesActualIA cargado previamente
+  reservacionesDB = estrategiaMesActualIA?.reservaciones_periodo
+    ? Object.values(estrategiaMesActualIA.reservaciones_periodo)
+    : [];
 
   const diaJS = new Date(anioActual, mesActual, 1).getDay();
   const celdasVacias = diaJS === 0 ? 6 : diaJS - 1; 
@@ -420,12 +435,19 @@ async function renderizarCalendarioDinamico() {
     const stringMes = String(mesActual + 1).padStart(2, '0');
     const fechaTextoIso = `${anioActual}-${stringMes}-${String(d).padStart(2, '0')}`;
 
-    const reservaReal = reservacionesDB.find(r => r.fecha_evento === fechaTextoIso);
+    const reservaReal = estrategiaMesActualIA?.reservaciones_periodo?.[fechaTextoIso] || null;
     const estaOcupado = !!reservaReal;
 
-    let precioSugeridoIa = 450000;
-    if (estrategiaMesActualIA && estrategiaMesActualIA.precios_sugeridos_calendario && estrategiaMesActualIA.precios_sugeridos_calendario[fechaTextoIso] !== undefined) {
+    // S: precio sugerido (ia_price — columna original del calendario)
+    let precioSugeridoIa = 400000;
+    if (estrategiaMesActualIA?.precios_sugeridos_calendario?.[fechaTextoIso] !== undefined) {
       precioSugeridoIa = estrategiaMesActualIA.precios_sugeridos_calendario[fechaTextoIso];
+    }
+
+    // R: precio computado por computo_calendario.js (computed_price)
+    let precioComputado = null;
+    if (estrategiaMesActualIA?.precios_computados_calendario?.[fechaTextoIso] !== undefined) {
+      precioComputado = estrategiaMesActualIA.precios_computados_calendario[fechaTextoIso];
     }
 
     const dayElement = document.createElement("div");
@@ -435,18 +457,25 @@ async function renderizarCalendarioDinamico() {
       dayElement.classList.add("today");
     }
 
+    const labelR = precioComputado !== null
+      ? '$' + (precioComputado / 1000).toFixed(0) + 'k'
+      : '—';
+
     dayElement.innerHTML = `
       <span class="day-number">${d}</span>
       <div class="day-prices-container">
         <div class="price-row ia-price"><span>S:</span>$${(precioSugeridoIa / 1000).toFixed(0)}k</div>
-        <div class="price-row real-price">
-          <span>R:</span>${estaOcupado ? '$' + (parseFloat(reservaReal.precio_final) / 1000).toFixed(0) + 'k' : '—'}
-        </div>
+        <div class="price-row real-price"><span>R:</span>${labelR}</div>
       </div>
     `;
 
     dayElement.addEventListener("click", () => {
-      alert(`Fecha seleccionada: ${fechaTextoIso}\nPrecio Sugerido IA: $${precioSugeridoIa.toLocaleString()} MXN`);
+      if (estaOcupado) {
+        abrirModalDetalle(reservaReal);
+      } else {
+        // Pre-fill modal with computed_price as the suggested price
+        abrirModalAgregar(fechaTextoIso, precioComputado ?? precioSugeridoIa);
+      }
     });
 
     container.appendChild(dayElement);
@@ -627,6 +656,120 @@ async function eliminarPeriodoEspecial(id, btn) {
 // Stubs para compatibilidad con los atributos inline del HTML original
 function calcularPeriodoEspecialIA() {}
 function guardarPeriodoEspecialBD() {}
+
+/* ==========================================================================
+   9. MODAL DE RESERVACIÓN — AGREGAR / VER / ELIMINAR
+   ========================================================================== */
+let _modalFechaActiva = null;
+let _modalReservaActiva = null;
+
+function abrirModalAgregar(fecha, precioIA) {
+  _modalFechaActiva = fecha;
+  _modalReservaActiva = null;
+
+  const [anio, mes, dia] = fecha.split('-');
+  document.getElementById('modalFechaLabel').innerText =
+    `${parseInt(dia)} de ${nombresMeses[parseInt(mes) - 1]} de ${anio}`;
+  document.getElementById('inputNombreCliente').value = '';
+  document.getElementById('inputPrecioFinal').value = precioIA;
+  document.getElementById('modalPrecioIA').innerText =
+    `$${Number(precioIA).toLocaleString('es-MX')} MXN`;
+
+  document.getElementById('modalVistaAgregar').style.display = 'block';
+  document.getElementById('modalVistaDetalle').style.display = 'none';
+  document.getElementById('modalReservacion').style.display = 'flex';
+  document.getElementById('inputNombreCliente').focus();
+}
+
+function abrirModalDetalle(reserva) {
+  _modalFechaActiva = reserva.fecha_evento;
+  _modalReservaActiva = reserva;
+
+  const [anio, mes, dia] = reserva.fecha_evento.split('-');
+  document.getElementById('modalDetalleFecha').innerText =
+    `${parseInt(dia)} de ${nombresMeses[parseInt(mes) - 1]} de ${anio}`;
+  document.getElementById('modalDetalleCliente').innerText =
+    reserva.nombre_cliente || 'Cliente Gala';
+  document.getElementById('modalDetallePrecio').innerText =
+    `$${Number(reserva.precio_final).toLocaleString('es-MX')} MXN`;
+  document.getElementById('modalDetalleId').innerText = `#${reserva.id_reservation}`;
+
+  document.getElementById('modalVistaAgregar').style.display = 'none';
+  document.getElementById('modalVistaDetalle').style.display = 'block';
+  document.getElementById('modalReservacion').style.display = 'flex';
+}
+
+function cerrarModalReservacion() {
+  document.getElementById('modalReservacion').style.display = 'none';
+  _modalFechaActiva = null;
+  _modalReservaActiva = null;
+}
+
+async function confirmarReservacion() {
+  const nombre  = document.getElementById('inputNombreCliente').value.trim() || 'Cliente Gala';
+  const precio  = parseFloat(document.getElementById('inputPrecioFinal').value);
+  const fecha   = _modalFechaActiva;
+
+  if (!fecha || isNaN(precio) || precio <= 0) {
+    alert('Por favor ingresa un precio válido.');
+    return;
+  }
+
+  const btnConfirmar = document.querySelector('.btn-modal-confirmar');
+  btnConfirmar.disabled = true;
+  btnConfirmar.innerText = 'Guardando...';
+
+  try {
+    const res = await fetch('/api/reservaciones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fecha_evento: fecha, precio_final: precio, nombre_cliente: nombre })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Error al guardar la reservación.');
+      return;
+    }
+    cerrarModalReservacion();
+    await renderizarCalendarioDinamico(); // Refrescar calendario con el nuevo dato
+  } catch (e) {
+    alert('No se pudo conectar con el servidor.');
+    console.error(e);
+  } finally {
+    btnConfirmar.disabled = false;
+    btnConfirmar.innerText = '✔ Confirmar Reservación';
+  }
+}
+
+async function eliminarReservacion() {
+  if (!_modalReservaActiva) return;
+  if (!confirm(`¿Cancelar la reservación #${_modalReservaActiva.id_reservation}?`)) return;
+
+  const btnEliminar = document.querySelector('.btn-modal-eliminar');
+  btnEliminar.disabled = true;
+
+  try {
+    const res = await fetch(`/api/reservaciones/${_modalReservaActiva.id_reservation}`, {
+      method: 'DELETE'
+    });
+    if (res.ok) {
+      cerrarModalReservacion();
+      await renderizarCalendarioDinamico();
+    } else {
+      alert('Error al cancelar la reservación.');
+    }
+  } catch (e) {
+    alert('No se pudo conectar con el servidor.');
+  } finally {
+    btnEliminar.disabled = false;
+  }
+}
+
+// Cerrar modal al hacer clic fuera de la tarjeta
+document.addEventListener('click', (e) => {
+  const overlay = document.getElementById('modalReservacion');
+  if (overlay && e.target === overlay) cerrarModalReservacion();
+});
 
 function generarGraficaHistoricaOcupacion() {
   const chart = document.getElementById("chartBars"); if (!chart) return; chart.innerHTML = "";
