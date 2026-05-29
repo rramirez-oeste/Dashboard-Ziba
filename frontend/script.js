@@ -126,6 +126,7 @@ async function iniciarDashboard() {
 
   // Carga inicial conectando con el Backend Relacional
   await cargarEstrategiaMesCompletoConIA(false);
+  await cargarPeriodosEspeciales();
   generarGraficaHistoricaOcupacion();
 }
 
@@ -157,7 +158,7 @@ const mapaClasesPesos = {
  */
 async function cargarPesosUsuario() {
   try {
-    const response = await fetch("http://localhost:3000/pesos-usuario");
+    const response = await fetch("/api/pesos-usuario");
     if (response.ok) {
       const data = await response.json();
       // Fusionar con valores por defecto si el backend devuelve datos parciales
@@ -178,11 +179,10 @@ async function cargarPesosUsuario() {
 function sincronizarSelectoresPesosUsuario() {
   const selectores = document.querySelectorAll(".select-peso-usuario");
   selectores.forEach(sel => {
-    const key = sel.dataset.pesoKey;
-    if (pesosUsuario[key]) {
+    const key = sel.dataset.pesoKey; // data-peso-key → dataset.pesoKey (camelCase automático)
+    if (key && pesosUsuario[key]) {
       sel.value = pesosUsuario[key];
-      // Aplicar clase semáforo
-      sel.className = "select-peso-usuario " + (mapaClasesPesos[pesosUsuario[key]] || "medio");
+      sel.className = "select-peso-usuario select-mes-cell " + (mapaClasesPesos[pesosUsuario[key]] || "medio");
     }
   });
 }
@@ -204,7 +204,7 @@ async function actualizarPesoUsuario(selectEl) {
 
   // 3. Persistir en el backend (si está disponible)
   try {
-    const response = await fetch("http://localhost:3000/pesos-usuario", {
+    const response = await fetch("/api/pesos-usuario", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value: val })
@@ -227,7 +227,7 @@ async function cargarEstrategiaMesCompletoConIA(esManual = false) {
   const ultimoDia = `${anioActual}-${String(mesActual + 1).padStart(2, '0')}-${new Date(anioActual, mesActual + 1, 0).getDate()}`;
 
   try {
-    const response = await fetch("http://localhost:3000/obtener-estrategia-periodo", {
+    const response = await fetch("/api/obtener-estrategia-periodo", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -237,10 +237,16 @@ async function cargarEstrategiaMesCompletoConIA(esManual = false) {
       })
     });
 
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.error("🔴 Error del servidor:", err.detalle || err.error || response.status);
+      return;
+    }
+
     const data = await response.json();
-    
-    puntosDiaPreferente = data.ponderacion_dias_user;
-    puntosDiaIA = data.ponderacion_dias_ia;
+
+    puntosDiaPreferente = data.ponderacion_dias_user || {};
+    puntosDiaIA = data.ponderacion_dias_ia || {};
     
     estacionalidadMesesBase[mesActual] = data.estacionalidad_periodo_user;
     estacionalidadMesesIA[mesActual] = data.estacionalidad_periodo_ia;
@@ -335,7 +341,7 @@ async function actualizarEstacionalidadMesLocal(selectEl) {
   estacionalidadMesesIA[idxMes] = val; 
 
   try {
-    const response = await fetch("http://localhost:3000/actualizar-ponderacion-mes", {
+    const response = await fetch("/api/actualizar-ponderacion-mes", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id_month: monthId, pond_month_user: val })
@@ -364,7 +370,7 @@ async function actualizarPuntosDiaLocal(inputEl) {
   inputEl.value = val;
 
   try {
-    await fetch("http://localhost:3000/actualizar-ponderacion-dia", {
+    await fetch("/api/actualizar-ponderacion-dia", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id_day: day, pond_day_user: val })
@@ -396,7 +402,7 @@ async function renderizarCalendarioDinamico() {
   });
 
   try {
-    const response = await fetch("http://localhost:3000/reservaciones");
+    const response = await fetch("/api/reservaciones");
     reservacionesDB = await response.json();
   } catch (e) { console.warn("No se pudieron actualizar los registros core."); }
 
@@ -492,6 +498,134 @@ async function actualizarCalendarioPorSelectores() {
   const yEl = document.getElementById("yearSelector"); if (yEl) anioActual = parseInt(yEl.value);
   await cargarEstrategiaMesCompletoConIA(false);
 }
+
+/* ==========================================================================
+   8. PERIODOS ESPECIALES — CRUD COMPLETO
+   ========================================================================== */
+
+async function cargarPeriodosEspeciales() {
+  try {
+    const res = await fetch("/api/periodos-especiales");
+    const data = await res.json();
+    renderizarPeriodosEspeciales(data);
+  } catch (e) {
+    console.warn("No se pudieron cargar los periodos especiales.", e);
+    renderizarPeriodosEspeciales([]);
+  }
+}
+
+function renderizarPeriodosEspeciales(periodos) {
+  const tbody = document.getElementById("tbodyPeriodosEspeciales");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  periodos.forEach(p => {
+    const tr = document.createElement("tr");
+    tr.dataset.id = p.id;
+    const claseIA = obtenerClasePorScore(p.pond_ia);
+    tr.innerHTML = `
+      <td>
+        <input type="text" class="input-table-cell" placeholder="Nombre del período"
+               value="${p.nombre}" style="width:120px; margin-bottom:4px;"
+               onchange="actualizarCampoPeriodo(${p.id}, 'nombre', this.value)">
+        <div class="rango-fecha-container">
+          <input type="date" class="input-date-custom" value="${p.fecha_inicio}"
+                 onchange="actualizarCampoPeriodo(${p.id}, 'fecha_inicio', this.value)">
+          <span class="separador-fecha">al</span>
+          <input type="date" class="input-date-custom" value="${p.fecha_fin}"
+                 onchange="actualizarCampoPeriodo(${p.id}, 'fecha_fin', this.value)">
+        </div>
+      </td>
+      <td style="text-align:center; vertical-align:middle;">
+        <input type="number" class="input-table-cell" min="0" max="100" value="${p.pond_user}"
+               onchange="actualizarCampoPeriodo(${p.id}, 'pond_user', this.value)">
+      </td>
+      <td style="text-align:center; vertical-align:middle;">
+        <div class="contenedor-badge-ia ${claseIA}">${p.pond_ia}</div>
+      </td>
+      <td style="text-align:center; vertical-align:middle;">
+        <button class="btn-eliminar-periodo" onclick="eliminarPeriodoEspecial(${p.id}, this)">✕</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Fila para agregar nuevo período
+  const trNuevo = document.createElement("tr");
+  trNuevo.id = "fila-nuevo-periodo";
+  trNuevo.innerHTML = `
+    <td colspan="4" style="text-align:center; padding: 10px;">
+      <button class="btn-agregar-periodo" onclick="agregarNuevoPeriodo()">+ Agregar Período</button>
+    </td>
+  `;
+  tbody.appendChild(trNuevo);
+}
+
+function obtenerClasePorScore(score) {
+  const n = parseFloat(score);
+  if (n >= 80) return "very-high";
+  if (n >= 60) return "high";
+  if (n >= 40) return "medio";
+  if (n >= 20) return "low";
+  return "very-low";
+}
+
+async function agregarNuevoPeriodo() {
+  const hoy = new Date().toISOString().split("T")[0];
+  try {
+    const res = await fetch("/api/periodos-especiales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nombre: "", fecha_inicio: hoy, fecha_fin: hoy, pond_user: 50, pond_ia: 50 })
+    });
+    if (res.ok) await cargarPeriodosEspeciales();
+  } catch (e) {
+    console.error("Error al agregar período especial.", e);
+  }
+}
+
+async function actualizarCampoPeriodo(id, campo, valor) {
+  // Leer el estado actual de la fila para enviar todos los campos en el PUT
+  const tr = document.querySelector(`#tbodyPeriodosEspeciales tr[data-id="${id}"]`);
+  if (!tr) return;
+  const inputs = tr.querySelectorAll("input");
+  const nombre      = inputs[0].value;
+  const fechaInicio = inputs[1].value;
+  const fechaFin    = inputs[2].value;
+  const pondUser    = parseFloat(inputs[3].value) || 50;
+
+  // Sobrescribir el campo que acaba de cambiar
+  const payload = { nombre, fecha_inicio: fechaInicio, fecha_fin: fechaFin, pond_user: pondUser, pond_ia: 50 };
+  if (campo === "nombre")       payload.nombre       = valor;
+  if (campo === "fecha_inicio") payload.fecha_inicio = valor;
+  if (campo === "fecha_fin")    payload.fecha_fin    = valor;
+  if (campo === "pond_user")    payload.pond_user    = parseFloat(valor) || 0;
+
+  try {
+    await fetch(`/api/periodos-especiales/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+  } catch (e) {
+    console.error("Error al actualizar período especial.", e);
+  }
+}
+
+async function eliminarPeriodoEspecial(id, btn) {
+  btn.disabled = true;
+  try {
+    await fetch(`/api/periodos-especiales/${id}`, { method: "DELETE" });
+    await cargarPeriodosEspeciales();
+  } catch (e) {
+    console.error("Error al eliminar período especial.", e);
+    btn.disabled = false;
+  }
+}
+
+// Stubs para compatibilidad con los atributos inline del HTML original
+function calcularPeriodoEspecialIA() {}
+function guardarPeriodoEspecialBD() {}
 
 function generarGraficaHistoricaOcupacion() {
   const chart = document.getElementById("chartBars"); if (!chart) return; chart.innerHTML = "";

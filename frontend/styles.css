@@ -1023,6 +1023,48 @@ body {
   border-color: var(--primary-orange) !important;
 }
 
+.btn-agregar-periodo {
+  background-color: var(--primary-orange);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 18px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition);
+  letter-spacing: 0.3px;
+}
+
+.btn-agregar-periodo:hover {
+  background-color: #e07b00;
+}
+
+.btn-eliminar-periodo {
+  background: none;
+  border: 1.5px solid #ff4d4d;
+  color: #ff4d4d;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+
+.btn-eliminar-periodo:hover {
+  background-color: #ff4d4d;
+  color: #fff;
+}
+
+.btn-eliminar-periodo:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ==========================================================================
    🤖 BADGES DE LA IA CON DISEÑO RECTANGULAR IDÉNTICO AL DEL USUARIO
    ========================================================================== */

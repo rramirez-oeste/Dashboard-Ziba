@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ziba Dashboard</title>
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/keycloak-js@latest/dist/keycloak.min.js"></script>
+  <!-- KEYCLOAK MOCK — reemplazar con el script real cuando auth.oeste.mx esté listo -->
+  <script>
+    function Keycloak() {
+      return {
+        authenticated: false,
+        idTokenParsed: null,
+        init: () => Promise.resolve(true),
+        logout: (opts) => { window.location.href = opts?.redirectUri || '/'; }
+      };
+    }
+  </script>
 </head>
 <body>
 
@@ -183,27 +193,14 @@
           <table class="tabla-demanda table-editable">
             <thead>
               <tr>
-                <th>Rango de Fechas</th>
+                <th>Nombre / Rango de Fechas</th>
                 <th style="text-align: center;">USUARIO</th>
                 <th style="text-align: center;">IA</th>
+                <th style="text-align: center;"></th>
               </tr>
             </thead>
             <tbody id="tbodyPeriodosEspeciales">
-              <tr>
-                <td>
-                  <div class="rango-fecha-container">
-                    <input type="date" id="fechaInicioEspecial" class="input-date-custom" onchange="calcularPeriodoEspecialIA()">
-                    <span class="separador-fecha">al</span>
-                    <input type="date" id="fechaFinEspecial" class="input-date-custom" onchange="calcularPeriodoEspecialIA()">
-                  </div>
-                </td>
-                <td style="text-align: center; vertical-align: middle;">
-                  <input type="number" id="inputPondEspecialUser" class="input-table-cell" min="0" max="100" onchange="guardarPeriodoEspecialBD(this)">
-                </td>
-                <td style="text-align: center; vertical-align: middle;">
-                  <div id="txtPondEspecialIA" class="contenedor-badge-ia medio">—</div>
-                </td>
-              </tr>
+              <!-- Renderizado dinámico desde script.js -->
             </tbody>
           </table>
         </div>

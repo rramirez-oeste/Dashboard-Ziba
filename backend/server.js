@@ -56,7 +56,7 @@ function esFeriadoMexico(fechaTexto) {
 const { calcularPreciosEstadisticos: _calcularPreciosEstadisticos } = require("./computo_calendario");
 
 function calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas) {
-  return _calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas, generarArregloFechas, esFeriadoMexico);
+  return _calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas, generarArregloFechas);
 }
 // Nota: calcularPreciosEstadisticos retorna una Promise — usar con await.
 
@@ -145,10 +145,10 @@ app.post("/obtener-estrategia-periodo", async (req, res) => {
     }
 
     /* ----------------------------------------------------------------------
-       📦 CAMINO B: INTENTAR LEER DESDE LA TABLA 'calendario' (CACHÉ DE LA BD)
+       📦 CAMINO B: LEER DESDE LA TABLA 'calendario' (CACHÉ DE LA BD)
        ---------------------------------------------------------------------- */
     const cacheBD = await pool.query(
-      `SELECT TO_CHAR(fecha, 'YYYY-MM-DD') as fecha_iso, ia_price, holiday FROM calendario 
+      `SELECT TO_CHAR(fecha, 'YYYY-MM-DD') as fecha_iso, ia_price, holiday FROM calendario
        WHERE fecha BETWEEN $1 AND $2 ORDER BY fecha ASC`,
       [fecha_inicio, fecha_fin]
     );
@@ -156,11 +156,9 @@ app.post("/obtener-estrategia-periodo", async (req, res) => {
     if (cacheBD.rows.length === periodoCompleto.length) {
       console.log("📦 [HÍBRIDO] Datos completos hallados en la tabla 'calendario'. 0s CPU.");
       let preciosCalendarioFinal = {};
-
       cacheBD.rows.forEach(row => {
         preciosCalendarioFinal[row.fecha_iso] = ocupadas[row.fecha_iso] ? ocupadas[row.fecha_iso] : Number(row.ia_price);
       });
-
       return res.json({
         ponderacion_dias_user: scoreBaseDiasUser,
         ponderacion_dias_ia: scoreBaseDiasIA,
@@ -174,38 +172,78 @@ app.post("/obtener-estrategia-periodo", async (req, res) => {
     }
 
     /* ----------------------------------------------------------------------
+       ⚡ CAMINO C: CACHÉ VACÍA — Responder inmediatamente con el algoritmo
+          local y disparar el cálculo de Ollama en segundo plano
+       ---------------------------------------------------------------------- */
+    console.log("⚡ [HÍBRIDO] Caché vacía. Respondiendo con algoritmo local y calculando con Ollama en segundo plano.");
+
+    // Calcular precios locales para respuesta inmediata
+    let preciosLocales = {};
+    periodoCompleto.forEach(f => {
+      if (ocupadas[f]) { preciosLocales[f] = ocupadas[f]; return; }
+      const diaSemana = new Date(f + 'T00:00:00').getDay();
+      let pts = scoreBaseDiasUser[diaSemana] !== undefined ? scoreBaseDiasUser[diaSemana] : 50;
+      if (esFeriadoMexico(f)) pts = (diaSemana >= 1 && diaSemana <= 4) ? 85 : 100;
+      let precioBase = 300000 + ((pts / 100) * 400000);
+      if (configMesActual.pond_month_user === "Muy alta" || configMesActual.pond_month_user === "Alta") precioBase += 50000;
+      if (configMesActual.pond_month_user === "Muy baja" || configMesActual.pond_month_user === "Baja") precioBase -= 30000;
+      preciosLocales[f] = Math.round(Math.max(300000, Math.min(700000, precioBase)));
+    });
+
+    // Responder al frontend de inmediato con los precios locales
+    res.json({
+      ponderacion_dias_user: scoreBaseDiasUser,
+      ponderacion_dias_ia: scoreBaseDiasIA,
+      estacionalidad_meses_completo_user: todosLosMesesBDUser,
+      estacionalidad_meses_completo_ia: todosLosMesesBDIA,
+      estacionalidad_periodo_user: configMesActual.pond_month_user,
+      estacionalidad_periodo_ia: configMesActual.pond_month_ia,
+      precios_sugeridos_calendario: preciosLocales,
+      metodo: "Algoritmo Local (Ollama calculando en fondo)"
+    });
+
+    // Lanzar el cálculo de Ollama en segundo plano para poblar el caché
+    calcularOllamaEnSegundoPlano(
+      periodoCompleto, scoreBaseDiasUser, configMesActual,
+      ocupadas, mesRepresentativoId
+    ).catch(err => console.error("⚠️ Error en cálculo de Ollama en segundo plano:", err.message));
+
+    return; // La respuesta ya fue enviada arriba
+
+    /* ----------------------------------------------------------------------
        🤖 CAMINO C: EJECUTAR OLLAMA POR MICRO-LOTES CON PROMPT MAESTRO INTEGRADO
        ---------------------------------------------------------------------- */
     console.log(`🤖 [HÍBRIDO] Caché incompleta. Invocando Ollama por micro-lotes.`);
-    const semanasSegmentadas = segmentarArreglo(periodoCompleto, 7);
-    let preciosSugeridosCalendarioUnificado = {};
-    let conteoEstacionalidadesIA = { "Muy alta": 0, "Alta": 0, "Media": 0, "Baja": 0, "Muy baja": 0 };
+  } catch (error) {
+    console.error("🔴 Error en el core del motor:", error.message);
+    if (!res.headersSent) res.status(500).json({ error: "Error en el servidor de analíticas", detalle: error.message });
+  }
+});
 
-    for (let i = 0; i < semanasSegmentadas.length; i++) {
-      const loteSemana = semanasSegmentadas[i];
-      const historialSemanalFiltrado = registrosDB.rows.filter(h => loteSemana.includes(h.fecha));
+/* ==========================================================================
+   FUNCIÓN AUXILIAR: Calcula precios con Ollama en segundo plano y los
+   guarda en la tabla 'calendario' para futuras cargas desde caché.
+   ========================================================================== */
+async function calcularOllamaEnSegundoPlano(periodoCompleto, scoreBaseDiasUser, configMesActual, ocupadas, mesRepresentativoId) {
+  try {
+  const semanasSegmentadas = segmentarArreglo(periodoCompleto, 7);
+  let conteoEstacionalidadesIA = { "Muy alta": 0, "Alta": 0, "Media": 0, "Baja": 0, "Muy baja": 0 };
 
-      // Mapeo estructurado para alimentar las propiedades del Prompt Maestro
-      let datosEntradaLote = loteSemana.map(fecha => {
-        const fechaObj = new Date(fecha + 'T00:00:00');
-        const diaSemana = fechaObj.getDay();
-        let pondBase = scoreBaseDiasUser[diaSemana] !== undefined ? scoreBaseDiasUser[diaSemana] : 50;
-        
-        if (esFeriadoMexico(fecha)) {
-          pondBase = (diaSemana >= 1 && diaSemana <= 4) ? 85 : 100;
-        }
+  for (let i = 0; i < semanasSegmentadas.length; i++) {
+    const loteSemana = semanasSegmentadas[i];
 
-        return {
-          fecha_solicitada: fecha,
-          ponderacion_dia: pondBase,
-          estacionalidad_mes: configMesActual.pond_month_user,
-          historial_reservaciones: historialSemanalFiltrado.map(h => ({
-            fecha_evento: h.fecha,
-            precio_final: Number(h.precio_final),
-            estatus: h.estatus
-          }))
-        };
-      });
+    let datosEntradaLote = loteSemana.map(fecha => {
+      const fechaObj = new Date(fecha + 'T00:00:00');
+      const diaSemana = fechaObj.getDay();
+      let pondBase = scoreBaseDiasUser[diaSemana] !== undefined ? scoreBaseDiasUser[diaSemana] : 50;
+      if (esFeriadoMexico(fecha)) pondBase = (diaSemana >= 1 && diaSemana <= 4) ? 85 : 100;
+      return {
+        fecha_solicitada: fecha,
+        ponderacion_dia: pondBase,
+        estacionalidad_mes: configMesActual.pond_month_user,
+        historial_reservaciones: []
+      };
+    });
 
       // 🏆 PROMPT MAESTRO DE MERCADOTECNIA TOTALMENTE ENCAPSULADO
       const promptCorto = `=== 1. ROL ===
@@ -263,21 +301,32 @@ Responde EXCLUSIVAMENTE con un objeto JSON plano, válido y perfectamente format
 === DATOS DE LA SOLICITUD ACTUAL ===
 Lote de procesamiento semanal indexado: ${JSON.stringify(datosEntradaLote)}`;
 
-      const respuestaOllama = await fetch(OLLAMA_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: MODELO, 
-          format: "json", 
-          prompt: promptCorto, 
-          stream: false,
-          options: { temperature: 0.1, num_predict: 500 }
-        })
-      });
+      let resultadoParcialIA = null;
+      try {
+        const controlador = new AbortController();
+        const timeoutId = setTimeout(() => controlador.abort(), 45000); // 45s por lote
+        const respuestaOllama = await fetch(OLLAMA_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controlador.signal,
+          body: JSON.stringify({
+            model: MODELO,
+            format: "json",
+            prompt: promptCorto,
+            stream: false,
+            options: { temperature: 0.1, num_predict: 500 }
+          })
+        });
+        clearTimeout(timeoutId);
+        if (respuestaOllama.ok) {
+          const dataOllama = await respuestaOllama.json();
+          resultadoParcialIA = JSON.parse(dataOllama.response.trim());
+        }
+      } catch (ollamaErr) {
+        console.warn(`⚠️ Ollama falló para el lote ${i + 1}: ${ollamaErr.message}. Usando algoritmo local.`);
+      }
 
-      if (respuestaOllama.ok) {
-        const dataOllama = await respuestaOllama.json();
-        const resultadoParcialIA = JSON.parse(dataOllama.response.trim());
+      if (resultadoParcialIA) {
 
         Object.assign(preciosSugeridosCalendarioUnificado, resultadoParcialIA.precios_sugeridos_calendario);
 
@@ -311,7 +360,7 @@ Lote de procesamiento semanal indexado: ${JSON.stringify(datosEntradaLote)}`;
       }
     }
 
-    // Calcular estacionalidad ganadora de la IA por votación de los bloques
+    // Calcular estacionalidad ganadora de la IA por votación
     let estacionalidadIAGanadora = configMesActual.pond_month_ia;
     let maxVotos = -1;
     Object.keys(conteoEstacionalidadesIA).forEach(cat => {
@@ -321,34 +370,16 @@ Lote de procesamiento semanal indexado: ${JSON.stringify(datosEntradaLote)}`;
       }
     });
 
-    // Actualizar tabla relacional de meses con el veredicto de la IA
     await pool.query(
       `UPDATE ponderacion_meses SET pond_month_ia = $1 WHERE id_month = $2`,
       [estacionalidadIAGanadora, mesRepresentativoId]
     );
 
-    // Cruzar precios unificados finales contra ocupadas antes de enviar al Front
-    let respuestaFinalPrecios = {};
-    periodoCompleto.forEach(f => {
-      respuestaFinalPrecios[f] = ocupadas[f] ? ocupadas[f] : (preciosSugeridosCalendarioUnificado[f] || 450000);
-    });
-
-    return res.json({
-      ponderacion_dias_user: scoreBaseDiasUser,
-      ponderacion_dias_ia: scoreBaseDiasIA,
-      estacionalidad_meses_completo_user: todosLosMesesBDUser,
-      estacionalidad_meses_completo_ia: todosLosMesesBDIA,
-      estacionalidad_periodo_user: configMesActual.pond_month_user,
-      estacionalidad_periodo_ia: estacionalidadIAGanadora,
-      precios_sugeridos_calendario: respuestaFinalPrecios,
-      metodo: "Cálculo en Vivo Ollama (Guardado en Tabla Calendario)"
-    });
-
-  } catch (error) {
-    console.error("🔴 Error en el core del motor:", error.message);
-    res.status(500).json({ error: "Error en el servidor de analíticas", detalle: error.message });
+    console.log(`✅ [SEGUNDO PLANO] Ollama completó el cálculo para el período.`);
+  } catch (err) {
+    console.error("⚠️ [SEGUNDO PLANO] Error en cálculo Ollama:", err.message);
   }
-});
+}
 
 /* ==========================================================================
    2. RUTAS DE ACTUALIZACIÓN MANUAL (VINCULADAS A TUS NUEVOS INPUTS DEL FRONT)
@@ -381,6 +412,78 @@ app.put("/actualizar-ponderacion-mes", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/* ==========================================================================
+   PERIODOS ESPECIALES
+   ========================================================================== */
+app.get("/periodos-especiales", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, nombre, TO_CHAR(fecha_inicio,'YYYY-MM-DD') as fecha_inicio,
+              TO_CHAR(fecha_fin,'YYYY-MM-DD') as fecha_fin, pond_user, pond_ia
+       FROM periodos_especiales ORDER BY fecha_inicio ASC`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/periodos-especiales", async (req, res) => {
+  try {
+    const { nombre, fecha_inicio, fecha_fin, pond_user, pond_ia } = req.body;
+    if (!fecha_inicio || !fecha_fin) return res.status(400).json({ error: "Faltan fechas" });
+    const result = await pool.query(
+      `INSERT INTO periodos_especiales (nombre, fecha_inicio, fecha_fin, pond_user, pond_ia)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [nombre || '', fecha_inicio, fecha_fin, pond_user ?? 50, pond_ia ?? 50]
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put("/periodos-especiales/:id", async (req, res) => {
+  try {
+    const { nombre, fecha_inicio, fecha_fin, pond_user, pond_ia } = req.body;
+    await pool.query(
+      `UPDATE periodos_especiales
+       SET nombre=$1, fecha_inicio=$2, fecha_fin=$3, pond_user=$4, pond_ia=$5
+       WHERE id=$6`,
+      [nombre || '', fecha_inicio, fecha_fin, pond_user ?? 50, pond_ia ?? 50, req.params.id]
+    );
+    res.json({ status: "ok" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete("/periodos-especiales/:id", async (req, res) => {
+  try {
+    await pool.query("DELETE FROM periodos_especiales WHERE id = $1", [req.params.id]);
+    res.json({ status: "ok" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/* ==========================================================================
+   PESOS DEL USUARIO (tabla simple en memoria — persiste en BD)
+   ========================================================================== */
+const pesosUsuarioDB = { dias: "Medio", mes: "Medio", fechas_especiales: "Medio", fechas_reservadas: "Medio" };
+
+app.get("/pesos-usuario", (req, res) => {
+  res.json(pesosUsuarioDB);
+});
+
+app.put("/pesos-usuario", (req, res) => {
+  const { key, value } = req.body;
+  if (key && value) pesosUsuarioDB[key] = value;
+  res.json({ status: "ok" });
+});
+
+app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 /* ==========================================================================
    3. OPERACIONES ESTÁNDAR: RESERVACIONES (TABLA 'reservaciones')
@@ -440,6 +543,110 @@ app.get("/test-ia", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("🚀 Servidor backend relacional corriendo en http://localhost:3000");
-});
+async function esperarPostgres(maxIntentos = 15, intervaloMs = 2000) {
+  for (let i = 1; i <= maxIntentos; i++) {
+    try {
+      await pool.query("SELECT 1");
+      console.log("✅ PostgreSQL listo.");
+      return;
+    } catch (err) {
+      console.log(`⏳ Esperando PostgreSQL... intento ${i}/${maxIntentos}`);
+      await new Promise(r => setTimeout(r, intervaloMs));
+    }
+  }
+  throw new Error("PostgreSQL no respondió después de varios intentos.");
+}
+
+async function inicializarTablas() {
+  await esperarPostgres();
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendario (
+      fecha    DATE    PRIMARY KEY,
+      id_day   INTEGER NOT NULL,
+      id_month INTEGER NOT NULL,
+      id_year  INTEGER NOT NULL,
+      ia_price NUMERIC NOT NULL DEFAULT 450000,
+      holiday  BOOLEAN NOT NULL DEFAULT FALSE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reservaciones (
+      id_reservation SERIAL PRIMARY KEY,
+      fecha_evento   DATE        NOT NULL,
+      precio_final   NUMERIC     NOT NULL,
+      estatus        TEXT        NOT NULL DEFAULT 'confirmado',
+      nombre_cliente TEXT        NOT NULL DEFAULT 'Cliente Gala'
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ponderacion_dias (
+      id_day        INTEGER PRIMARY KEY,
+      pond_day_user NUMERIC NOT NULL DEFAULT 50,
+      pond_day_ia   NUMERIC NOT NULL DEFAULT 50
+    )
+  `);
+  // Migrar columnas TEXT → NUMERIC si la tabla ya existía con tipo incorrecto
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='ponderacion_dias' AND column_name='pond_day_user' AND data_type='text'
+      ) THEN
+        ALTER TABLE ponderacion_dias
+          ALTER COLUMN pond_day_user TYPE NUMERIC USING 50,
+          ALTER COLUMN pond_day_ia   TYPE NUMERIC USING 50;
+        UPDATE ponderacion_dias SET pond_day_user = 50, pond_day_ia = 50;
+      END IF;
+    END $$;
+  `);
+  for (let d = 0; d <= 6; d++) {
+    await pool.query(
+      `INSERT INTO ponderacion_dias (id_day, pond_day_user, pond_day_ia)
+       VALUES ($1, 50, 50) ON CONFLICT (id_day) DO NOTHING`,
+      [d]
+    );
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ponderacion_meses (
+      id_month        INTEGER PRIMARY KEY,
+      pond_month_user TEXT NOT NULL DEFAULT 'Media',
+      pond_month_ia   TEXT NOT NULL DEFAULT 'Media'
+    )
+  `);
+  for (let m = 1; m <= 12; m++) {
+    await pool.query(
+      `INSERT INTO ponderacion_meses (id_month, pond_month_user, pond_month_ia)
+       VALUES ($1, 'Media', 'Media') ON CONFLICT (id_month) DO NOTHING`,
+      [m]
+    );
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS periodos_especiales (
+      id           SERIAL PRIMARY KEY,
+      nombre       TEXT NOT NULL DEFAULT '',
+      fecha_inicio DATE NOT NULL,
+      fecha_fin    DATE NOT NULL,
+      pond_user    NUMERIC NOT NULL DEFAULT 50,
+      pond_ia      NUMERIC NOT NULL DEFAULT 50
+    )
+  `);
+
+  console.log("✅ Tablas verificadas/creadas correctamente.");
+}
+
+inicializarTablas()
+  .then(() => {
+    app.listen(3000, () => {
+      console.log("🚀 Servidor backend relacional corriendo en http://localhost:3000");
+    });
+  })
+  .catch(err => {
+    console.error("❌ Error al inicializar tablas:", err.message);
+    process.exit(1);
+  });
