@@ -53,6 +53,13 @@ function esFeriadoMexico(fechaTexto) {
   return feriadosFijos.includes(mmdd);
 }
 
+const { calcularPreciosEstadisticos: _calcularPreciosEstadisticos } = require("./computo_calendario");
+
+function calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas) {
+  return _calcularPreciosEstadisticos(fechaInicio, fechaFin, reservacionesConfirmadas, generarArregloFechas, esFeriadoMexico);
+}
+// Nota: calcularPreciosEstadisticos retorna una Promise — usar con await.
+
 /* ==========================================================================
    1. RUTA CORE: OBTENER ESTRATEGIA MENSUAL O DE RANGO (HÍBRIDO COMPLETO)
    ========================================================================== */
